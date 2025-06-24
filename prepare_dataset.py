@@ -15,12 +15,21 @@ class QMugsDatasetPreparator:
         self.structures_file = self.data_dir / "structures.tar.gz"
         self.summary_file = self.data_dir / "summary.csv"
         
-    def download_data(self):
+    def download_data(self, force=False):
         """Download QMugs dataset files"""
-        print("Downloading QMugs dataset...")
+        print("Checking for existing QMugs dataset files...")
         
         # Create data directory
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Check if files already exist
+        files_exist = self.structures_file.exists() and self.summary_file.exists()
+        if not force and files_exist:
+            print("Dataset files already exist:")
+            print(f"  - {self.structures_file} ({self.structures_file.stat().st_size / (1024**3):.1f} GB)")
+            print(f"  - {self.summary_file} ({self.summary_file.stat().st_size / (1024**2):.1f} MB)")
+            print("Skipping download. Use --force-download to redownload.")
+            return
         
         # Download commands
         structures_cmd = (
@@ -38,15 +47,26 @@ class QMugsDatasetPreparator:
         print(f"2. {summary_cmd}")
         print("\nThen run this script again with --extract flag")
         
-    def extract_structures(self):
+    def extract_structures(self, force=False):
         """Extract structures.tar.gz"""
+        extract_dir = self.data_dir / "extracted_structures"
+        structures_subdir = extract_dir / "structures"
+        
+        # Check if already extracted
+        if not force and structures_subdir.exists():
+            sdf_count = len(list(structures_subdir.rglob("*.sdf")))
+            if sdf_count > 0:
+                print(f"Structures already extracted to {extract_dir}")
+                print(f"Found {sdf_count:,} SDF files. Skipping extraction.")
+                print("Use --force-extract to re-extract.")
+                return extract_dir
+        
         print("Extracting structures...")
         
         if not self.structures_file.exists():
             raise FileNotFoundError(f"structures.tar.gz not found at {self.structures_file}")
         
-        # Extract to temporary directory
-        extract_dir = self.data_dir / "extracted_structures"
+        # Extract to directory
         extract_dir.mkdir(exist_ok=True)
         
         with tarfile.open(self.structures_file, 'r:gz') as tar:
@@ -121,7 +141,7 @@ class QMugsDatasetPreparator:
         
         return train_df, val_df, test_df
     
-    def organize_files(self, train_df, val_df, test_df, structures_dir, max_files_per_split=None):
+    def organize_files(self, train_df, val_df, test_df, structures_dir, max_files_per_split=None, resume=True):
         """Organize SDF files into train/val/test directories"""
         print("Organizing files into splits...")
         
@@ -129,6 +149,16 @@ class QMugsDatasetPreparator:
         for split in ['train', 'val', 'test']:
             split_dir = self.output_dir / split
             split_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Check existing files if resuming
+        existing_counts = {}
+        if resume:
+            for split in ['train', 'val', 'test']:
+                split_dir = self.output_dir / split
+                existing_files = list(split_dir.glob("*.sdf"))
+                existing_counts[split] = len(existing_files)
+                if existing_files:
+                    print(f"Found {len(existing_files):,} existing files in {split} split")
         
         splits = {
             'train': train_df,
@@ -145,7 +175,7 @@ class QMugsDatasetPreparator:
                     print(f"Sampled {split_name} to {len(splits[split_name])} files")
         
         # Find all SDF files in extracted directory for verification
-        sdf_files = list(structures_dir.rglob("*.sdf"))
+        sdf_files = list((structures_dir / "structures").rglob("*.sdf"))
         print(f"Found {len(sdf_files)} SDF files in extracted structures")
         
         # Copy files to appropriate splits with parallel processing
@@ -153,16 +183,21 @@ class QMugsDatasetPreparator:
         from concurrent.futures import ThreadPoolExecutor, as_completed
         
         def copy_file(args):
-            row, split_dir, structures_dir = args
+            row, split_dir, structures_dir, resume = args
             
             if 'chembl_id' in row and 'conf_id' in row:
                 chembl_id = row['chembl_id']
                 conf_id = row['conf_id']
                 
-                source_path = structures_dir / chembl_id / f"{conf_id}.sdf"
+                dest_filename = f"{chembl_id}_{conf_id}.sdf"
+                dest_path = split_dir / dest_filename
+                
+                # Skip if file already exists and we're resuming
+                if resume and dest_path.exists():
+                    return True
+                
+                source_path = structures_dir / "structures" / chembl_id / f"{conf_id}.sdf"
                 if source_path.exists():
-                    dest_filename = f"{chembl_id}_{conf_id}.sdf"
-                    dest_path = split_dir / dest_filename
                     shutil.copy2(source_path, dest_path)
                     return True
             return False
@@ -171,8 +206,18 @@ class QMugsDatasetPreparator:
             split_dir = self.output_dir / split_name
             print(f"\nProcessing {split_name} split ({len(split_df)} files)...")
             
+            # Skip if split is already complete
+            expected_files = len(split_df)
+            current_files = existing_counts.get(split_name, 0)
+            
+            if resume and current_files >= expected_files:
+                print(f"Split {split_name} already complete ({current_files:,} files). Skipping.")
+                continue
+            elif resume and current_files > 0:
+                print(f"Resuming {split_name} split from {current_files:,}/{expected_files:,} files")
+            
             # Prepare arguments for parallel processing
-            args_list = [(row, split_dir, structures_dir) for _, row in split_df.iterrows()]
+            args_list = [(row, split_dir, structures_dir, resume) for _, row in split_df.iterrows()]
             
             # Use ThreadPoolExecutor for I/O bound operations
             copied_files = 0
@@ -191,13 +236,13 @@ class QMugsDatasetPreparator:
             split_df.to_csv(metadata_file, index=False)
             print(f"Saved {split_name} metadata to {metadata_file}")
     
-    def prepare_dataset(self, extract=False, create_splits=True):
+    def prepare_dataset(self, extract=False, create_splits=True, force_extract=False, resume=True):
         """Main function to prepare the dataset"""
         print("Preparing QMugs dataset...")
         
         if extract:
             # Extract structures
-            structures_dir = self.extract_structures()
+            structures_dir = self.extract_structures(force=force_extract)
         else:
             structures_dir = self.data_dir / "extracted_structures"
             if not structures_dir.exists():
@@ -211,8 +256,28 @@ class QMugsDatasetPreparator:
             # Create splits
             train_df, val_df, test_df = self.create_splits(df)
             
+            # Check if splits already exist and are complete
+            splits_complete = True
+            if resume:
+                for split_name, split_df in [('train', train_df), ('val', val_df), ('test', test_df)]:
+                    split_dir = self.output_dir / split_name
+                    if split_dir.exists():
+                        existing_files = len(list(split_dir.glob("*.sdf")))
+                        expected_files = len(split_df)
+                        if existing_files < expected_files:
+                            splits_complete = False
+                            break
+                    else:
+                        splits_complete = False
+                        break
+                
+                if splits_complete:
+                    print("All splits already complete. Skipping file organization.")
+                    print("Use --no-resume to force recreation of splits.")
+                    return
+            
             # Organize files
-            self.organize_files(train_df, val_df, test_df, structures_dir)
+            self.organize_files(train_df, val_df, test_df, structures_dir, resume=resume)
             
             print(f"\nDataset preparation complete!")
             print(f"Output directory: {self.output_dir}")
@@ -229,6 +294,9 @@ def main():
     parser.add_argument("--download", action="store_true", help="Show download commands")
     parser.add_argument("--extract", action="store_true", help="Extract structures.tar.gz")
     parser.add_argument("--no-splits", action="store_true", help="Skip creating splits")
+    parser.add_argument("--force-download", action="store_true", help="Force redownload even if files exist")
+    parser.add_argument("--force-extract", action="store_true", help="Force re-extraction even if already extracted")
+    parser.add_argument("--no-resume", action="store_true", help="Don't resume partial splits, start fresh")
     parser.add_argument("--test-size", type=float, default=0.2, help="Test set size (default: 0.2)")
     parser.add_argument("--val-size", type=float, default=0.1, help="Validation set size (default: 0.1)")
     
@@ -237,11 +305,13 @@ def main():
     preparator = QMugsDatasetPreparator(args.data_dir, args.output_dir)
     
     if args.download:
-        preparator.download_data()
+        preparator.download_data(force=args.force_download)
     else:
         preparator.prepare_dataset(
             extract=args.extract,
-            create_splits=not args.no_splits
+            create_splits=not args.no_splits,
+            force_extract=args.force_extract,
+            resume=not args.no_resume
         )
 
 if __name__ == "__main__":

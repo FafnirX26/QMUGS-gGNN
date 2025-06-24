@@ -116,8 +116,24 @@ def create_splits_fast(df, output_suffix="", test_size=0.2, val_size=0.1, seed=4
             chembl_id = row['chembl_id']
             conf_id = row['conf_id']
             
-            source_path = structures_dir / chembl_id / f"{conf_id}.sdf"
-            if source_path.exists():
+            # Try multiple possible paths for the source file
+            possible_paths = [
+                structures_dir / chembl_id / f"{conf_id}.sdf",
+                structures_dir / "extracted_structures" / chembl_id / f"{conf_id}.sdf"
+            ]
+            
+            # Also search recursively for the chembl_id directory
+            for subdir in structures_dir.rglob(chembl_id):
+                if subdir.is_dir():
+                    possible_paths.append(subdir / f"{conf_id}.sdf")
+            
+            source_path = None
+            for path in possible_paths:
+                if path.exists():
+                    source_path = path
+                    break
+            
+            if source_path:
                 dest_path = split_dir / f"{chembl_id}_{conf_id}.sdf"
                 shutil.copy2(source_path, dest_path)
                 copied += 1
