@@ -51,8 +51,8 @@ This implementation features an advanced **Quantum-aware Graph Neural Network** 
 ### Setup
 ```bash
 # Clone the repository
-git clone https://github.com/FafnirX26/QMugs_qGNN.git
-cd QMugs_qGNN
+git clone https://github.com/FafnirX26/QMUGS-gGNN.git
+cd QMUGS-qGNN.git
 
 # Install dependencies
 pip install -r requirements.txt
