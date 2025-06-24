@@ -51,7 +51,7 @@ This implementation features an advanced **Quantum-aware Graph Neural Network** 
 ### Setup
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/QMugs_qGNN.git
+git clone https://github.com/FafnirX26/QMugs_qGNN.git
 cd QMugs_qGNN
 
 # Install dependencies
@@ -335,7 +335,7 @@ If you use this code in your research, please cite:
 ```bibtex
 @software{qmugs_qgnn,
   title={Quantum Graph Neural Network for QMugs Dataset},
-  author={Your Name},
+  author={Ravindra Name},
   year={2024},
   url={https://github.com/yourusername/QMugs_qGNN}
 }
