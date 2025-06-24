@@ -42,7 +42,8 @@ class QuantumGNN(nn.Module):
                 heads=num_heads,
                 dropout=dropout,
                 edge_dim=hidden_dim,
-                beta=True
+                beta=True,
+                concat=False
             )
             self.conv_layers.append(conv)
             self.norm_layers.append(LayerNorm(hidden_dim))
@@ -50,12 +51,12 @@ class QuantumGNN(nn.Module):
         # 3D position encoding
         self.pos_encoder = PositionalEncoder3D(hidden_dim)
         
-        # Global pooling and readout
-        self.pool_layers = nn.ModuleList([
+        # Store pooling functions (not as modules)
+        self.pool_functions = [
             global_mean_pool,
             global_max_pool,
             global_add_pool
-        ])
+        ]
         
         # Output layers
         self.readout = nn.Sequential(
@@ -103,7 +104,7 @@ class QuantumGNN(nn.Module):
         
         # Global pooling
         pooled_features = []
-        for pool_fn in self.pool_layers:
+        for pool_fn in self.pool_functions:
             pooled_features.append(pool_fn(x, batch))
         
         graph_repr = torch.cat(pooled_features, dim=1)
@@ -201,7 +202,7 @@ class QuantumGNNWithAttention(QuantumGNN):
         
         # Global pooling
         pooled_features = []
-        for pool_fn in self.pool_layers:
+        for pool_fn in self.pool_functions:
             pooled_features.append(pool_fn(x, batch))
         
         graph_repr = torch.cat(pooled_features, dim=1)

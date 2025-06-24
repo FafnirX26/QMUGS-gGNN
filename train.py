@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from tqdm import tqdm
 import wandb
-from tensorboard import SummaryWriter
+from torch.utils.tensorboard import SummaryWriter
 import json
 from datetime import datetime
 
@@ -120,7 +120,13 @@ class QuantumGNNTrainer:
             
             # Forward pass
             pred = self.model(batch)
-            loss = self.criterion(pred, batch.y)
+            
+            # Reshape targets to match prediction shape
+            batch_size = len(torch.unique(batch.batch))
+            num_properties = len(self.config.target_properties)
+            targets = batch.y.view(batch_size, num_properties)
+            
+            loss = self.criterion(pred, targets)
             
             # Backward pass
             loss.backward()
@@ -153,13 +159,19 @@ class QuantumGNNTrainer:
                     continue
                 
                 pred = self.model(batch)
-                loss = self.criterion(pred, batch.y)
+                
+                # Reshape targets to match prediction shape
+                batch_size = len(torch.unique(batch.batch))
+                num_properties = len(self.config.target_properties)
+                targets = batch.y.view(batch_size, num_properties)
+                
+                loss = self.criterion(pred, targets)
                 
                 total_loss += loss.item()
                 num_batches += 1
                 
                 all_preds.append(pred.cpu().numpy())
-                all_targets.append(batch.y.cpu().numpy())
+                all_targets.append(targets.cpu().numpy())
         
         avg_loss = total_loss / num_batches if num_batches > 0 else float('inf')
         self.val_losses.append(avg_loss)
@@ -314,7 +326,7 @@ class QuantumGNNTrainer:
                 
                 pred = self.model(batch)
                 all_preds.append(pred.cpu().numpy())
-                all_targets.append(batch.y.cpu().numpy())
+                all_targets.append(targets.cpu().numpy())
         
         if all_preds:
             all_preds = np.concatenate(all_preds, axis=0)

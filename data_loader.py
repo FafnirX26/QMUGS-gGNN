@@ -4,10 +4,14 @@ import pandas as pd
 import numpy as np
 from rdkit import Chem
 from rdkit.Chem import AllChem
+from rdkit import RDLogger
 from torch_geometric.data import Data, Dataset
 from torch_geometric.loader import DataLoader
 from typing import List, Dict, Optional, Tuple
 import json
+
+# Suppress RDKit warnings
+RDLogger.DisableLog('rdApp.*')
 
 class QMugsDataset(Dataset):
     def __init__(self, root: str, split: str = 'train', target_properties: List[str] = None, summary_df: pd.DataFrame = None):
@@ -58,8 +62,15 @@ class QMugsDataset(Dataset):
     
     def get(self, idx):
         row = self.metadata.iloc[idx]
-        mol_id = row['mol_id']
-        filepath = row['filepath']
+        # Handle both old (mol_id) and new (chembl_id + conf_id) formats
+        if 'mol_id' in row:
+            mol_id = row['mol_id']
+            filepath = row['filepath']
+        else:
+            chembl_id = row['chembl_id'] 
+            conf_id = row['conf_id']
+            mol_id = f"{chembl_id}_{conf_id}"
+            filepath = os.path.join(self.root, self.split, f"{mol_id}.sdf")
         
         # Load molecule from SDF
         mol = self._load_molecule(filepath)
@@ -198,6 +209,37 @@ class QMugsDataset(Dataset):
             for prop_name in self.target_properties:
                 targets.append(props.get(prop_name, 0.0))
             return targets
+        
+        # Try to load directly from metadata CSV
+        if hasattr(self, 'metadata') and not self.metadata.empty:
+            # Find the row for this molecule
+            if 'mol_id' in self.metadata.columns:
+                mask = self.metadata['mol_id'] == mol_id
+            else:
+                # Handle chembl_id_conf_id format
+                chembl_id, conf_id = mol_id.split('_', 1)
+                mask = (self.metadata['chembl_id'] == chembl_id) & (self.metadata['conf_id'] == conf_id)
+            
+            if mask.any():
+                row = self.metadata[mask].iloc[0]
+                # Map target properties to actual column names
+                property_map = {
+                    'homo_energy': 'DFT_HOMO_ENERGY',
+                    'lumo_energy': 'DFT_LUMO_ENERGY', 
+                    'gap_energy': 'DFT_HOMO_LUMO_GAP',
+                    'dipole_moment': 'DFT_DIPOLE_TOT',
+                    'polarizability': 'GFN2_POLARIZABILITY_MOLECULAR',
+                    'electronic_energy': 'DFT_TOTAL_ENERGY',
+                    'zero_point_energy': 'GFN2_ENTHALPY_VIB'
+                }
+                
+                for prop_name in self.target_properties:
+                    col_name = property_map.get(prop_name, prop_name)
+                    if col_name in row and pd.notna(row[col_name]):
+                        targets.append(float(row[col_name]))
+                    else:
+                        targets.append(0.0)
+                return targets
         
         # Try to load from SDF properties
         try:

@@ -2,7 +2,7 @@ import torch
 
 class Config:
     # Dataset
-    data_dir = "data/qmugs_balanced_10000mol_1conf"  # Use smaller dataset by default
+    data_dir = "data/qmugs"  # Use the prepared dataset
     target_properties = [
         "homo_energy",
         "lumo_energy", 
